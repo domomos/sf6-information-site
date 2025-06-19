@@ -1,0 +1,2 @@
+# StreetFighter6_Information
+StreetFighter6に関する情報を掲載する
