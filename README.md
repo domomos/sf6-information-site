@@ -219,7 +219,7 @@
 <details>
   <summary>エレナ</summary>
 
-- [立ち回り・コンボ等](./キャラクターデータ/エレナ.md)
+- [立ち回り・コンボ等](./character-data/Elena.md)
 - フレーム
 
 </details>
