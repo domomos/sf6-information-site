@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Combo Builder</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+    select, input, button, textarea { padding:8px; font-size:16px; }
+    .card { border:1px solid #ddd; border-radius:10px; padding:12px; margin:10px 0; }
+    .muted { color:#666; }
+    .chips span { display:inline-block; padding:2px 8px; border:1px solid #ccc; border-radius:999px; margin-right:6px; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>格ゲー コンボまとめ（プロト）</h1>
+
+  <div class="row">
+    <label>ゲーム
+      <select id="game">
+        <option>SF6</option>
+        <option>GGST</option>
+        <option>GBVSR</option>
+      </select>
+    </label>
+
+    <label>キャラ
+      <select id="character">
+        <option>Rashid</option>
+        <option>Ryu</option>
+        <option>Ken</option>
+      </select>
+    </label>
+
+    <label>位置
+      <select id="position">
+        <option value="mid">中央</option>
+        <option value="corner">端</option>
+      </select>
+    </label>
+
+    <label>難易度
+      <select id="difficulty">
+        <option value="1">1(易)</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5(難)</option>
+      </select>
+    </label>
+  </div>
+
+  <h2>入力ビルダー</h2>
+  <div class="row">
+    <label>レバー
+      <select id="motion">
+        <option value="">(なし)</option>
+        <option>5</option><option>6</option><option>4</option><option>2</option><option>8</option>
+        <option>236</option><option>214</option><option>623</option><option>41236</option><option>63214</option>
+      </select>
+    </label>
+
+    <label>ボタン
+      <select id="button">
+        <option value="">(なし)</option>
+        <option>LP</option><option>MP</option><option>HP</option>
+        <option>LK</option><option>MK</option><option>HK</option>
+        <option>P</option><option>K</option>
+      </select>
+    </label>
+
+    <label>修飾
+      <select id="modifier">
+        <option value="">(なし)</option>
+        <option value="OD">OD</option>
+        <option value="hold">hold</option>
+        <option value="charge">charge</option>
+      </select>
+    </label>
+
+    <button id="addStep">1手追加</button>
+    <button id="undoStep">戻す</button>
+    <button id="clearSteps">クリア</button>
+  </div>
+
+  <div class="card">
+    <div class="muted">プレビュー</div>
+    <div id="preview" style="font-size:18px; margin-top:6px;"></div>
+  </div>
+
+  <div class="row">
+    <label>ダメージ
+      <input id="damage" type="number" min="0" placeholder="任意">
+    </label>
+    <label>タグ（カンマ区切り）
+      <input id="tags" placeholder="confirm,meterless...">
+    </label>
+  </div>
+
+  <div class="row">
+    <label style="flex:1; min-width:280px;">メモ
+      <textarea id="notes" rows="2" style="width:100%;" placeholder="状況、注意点など"></textarea>
+    </label>
+  </div>
+
+  <div class="row">
+    <button id="saveCombo">保存</button>
+    <button id="exportJson">JSONを書き出し</button>
+    <button id="wipeAll" style="margin-left:auto;">全削除</button>
+  </div>
+
+  <h2>一覧</h2>
+  <div class="row">
+    <label>検索
+      <input id="q" placeholder="技名/タグ/メモ…">
+    </label>
+    <label>キャラ絞り込み
+      <select id="filterCharacter">
+        <option value="">(すべて)</option>
+        <option>Rashid</option>
+        <option>Ryu</option>
+        <option>Ken</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="list"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  const STORAGE_KEY = "combo_db_v1";
+  let steps = []; // 今作ってるコンボ手順（配列）
+
+  function loadDb() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+    catch { return []; }
+  }
+  function saveDb(db) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+  }
+
+  function stepToToken(motion, button, modifier) {
+    // 表記ルールはここで統一する（後で変更しやすい）
+    let base = "";
+    if (modifier === "OD") base += "OD ";
+    if (motion) base += motion;
+    if (button) base += button;
+    if (!motion && !button) base = "(?)";
+    if (modifier === "hold") base += "(hold)";
+    if (modifier === "charge") base = "[charge] " + base;
+    return base.trim();
+  }
+
+  function renderPreview() {
+    $("preview").textContent = steps.length ? steps.join(" > ") : "（まだ入力なし）";
+  }
+
+  function renderList() {
+    const db = loadDb();
+    const q = $("q").value.trim().toLowerCase();
+    const fc = $("filterCharacter").value;
+
+    const filtered = db.filter(x => {
+      if (fc && x.character !== fc) return false;
+      if (!q) return true;
+      const hay = [
+        x.game, x.character, x.position, x.notes || "",
+        (x.tags || []).join(","), (x.steps || []).join(" ")
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    }).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+
+    $("list").innerHTML = filtered.map(x => `
+      <div class="card">
+        <div><b>${x.game}</b> / <b>${x.character}</b> <span class="muted">(${x.position}, 難易度${x.difficulty})</span></div>
+        <div style="margin:6px 0;"><code>${(x.steps||[]).join(" > ")}</code></div>
+        <div class="muted">Damage: ${x.damage ?? "-"} / Tags: ${(x.tags||[]).join(", ") || "-"}</div>
+        ${x.notes ? `<div style="margin-top:6px;">${escapeHtml(x.notes)}</div>` : ""}
+        <div class="row" style="margin-top:10px;">
+          <button onclick="copyText('${encodeURIComponent((x.steps||[]).join(' > '))}')">コピー</button>
+          <button onclick="deleteCombo('${x.id}')">削除</button>
+        </div>
+      </div>
+    `).join("") || "<div class='muted'>まだデータがありません。</div>";
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  window.copyText = (encoded) => {
+    const text = decodeURIComponent(encoded);
+    navigator.clipboard?.writeText(text);
+    alert("コピーしました");
+  };
+
+  window.deleteCombo = (id) => {
+    const db = loadDb().filter(x => x.id !== id);
+    saveDb(db);
+    renderList();
+  };
+
+  function uuid() {
+    return (crypto?.randomUUID?.() || ("id_" + Math.random().toString(16).slice(2)));
+  }
+
+  $("addStep").addEventListener("click", () => {
+    const token = stepToToken($("motion").value, $("button").value, $("modifier").value);
+    steps.push(token);
+    renderPreview();
+  });
+
+  $("undoStep").addEventListener("click", () => {
+    steps.pop();
+    renderPreview();
+  });
+
+  $("clearSteps").addEventListener("click", () => {
+    steps = [];
+    renderPreview();
+  });
+
+  $("saveCombo").addEventListener("click", () => {
+    if (!steps.length) { alert("手順が空です"); return; }
+
+    const combo = {
+      id: uuid(),
+      game: $("game").value,
+      character: $("character").value,
+      position: $("position").value,
+      difficulty: Number($("difficulty").value),
+      steps: [...steps],
+      damage: $("damage").value ? Number($("damage").value) : null,
+      tags: $("tags").value.split(",").map(s=>s.trim()).filter(Boolean),
+      notes: $("notes").value.trim(),
+      createdAt: Date.now()
+    };
+
+    const db = loadDb();
+    db.push(combo);
+    saveDb(db);
+
+    // 入力リセット
+    steps = [];
+    $("damage").value = "";
+    $("tags").value = "";
+    $("notes").value = "";
+    renderPreview();
+    renderList();
+    alert("保存しました");
+  });
+
+  $("exportJson").addEventListener("click", () => {
+    const db = loadDb();
+    const blob = new Blob([JSON.stringify(db, null, 2)], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "combo_db.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  $("wipeAll").addEventListener("click", () => {
+    if (!confirm("全部消します。OK？")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    renderList();
+  });
+
+  $("q").addEventListener("input", renderList);
+  $("filterCharacter").addEventListener("change", renderList);
+
+  renderPreview();
+  renderList();
+</script>
+</body>
+</html>
